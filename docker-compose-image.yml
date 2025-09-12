@@ -1,0 +1,11 @@
+# It's a best practice to specify the docker-compose version.
+version: '3.8'
+
+services:
+  mail-rest-api:
+    image: ghcr.io/nbahbnco/mail-rest-api:latest
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    restart: unless-stopped
