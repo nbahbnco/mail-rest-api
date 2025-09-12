@@ -1,0 +1,19 @@
+[Unit]
+Description=Email Rest Gateway
+After=network.target
+
+[Service]
+User=www
+Group=www-data
+ExecStart=/usr/bin/go-email-api
+Restart=on-failure
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+ProtectSystem=full
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
