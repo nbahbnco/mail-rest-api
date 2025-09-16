@@ -120,6 +120,7 @@ func emailWorkerProcess() {
 			if err != nil {
 				log.Printf("Error sending queued email to %s: %v", email.To, err)
 			}
+			log.Printf("%s sent successfully", email.To)
 			// Wait for the ticker before processing the next email
 			<-ticker.C
 
