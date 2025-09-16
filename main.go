@@ -116,7 +116,10 @@ func emailWorkerProcess() {
 		select {
 		case email := <-emailQueue:
 			// Send the email
-			sendQueuedEmail(email)
+			err := sendQueuedEmail(email)
+			if err != nil {
+				log.Printf("Error sending queued email to %s: %v", email.To, err)
+			}
 			// Wait for the ticker before processing the next email
 			<-ticker.C
 
