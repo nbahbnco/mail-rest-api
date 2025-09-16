@@ -1,14 +1,19 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"net/smtp"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
+	"syscall"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/joho/godotenv"
@@ -28,9 +33,19 @@ type SMTPConfig struct {
 	Sender   string
 }
 
+type QueuedEmail struct {
+	To      string
+	Subject string
+	Body    string
+	ID      string
+}
+
 var (
 	smtpConfig   SMTPConfig
 	validAPIKeys map[string]bool // Use a map for efficient key lookups
+	emailQueue   chan QueuedEmail
+	emailWorker  sync.WaitGroup
+	quitChan     chan bool
 )
 
 func init() {
@@ -81,6 +96,52 @@ func init() {
 		}
 	}
 	log.Printf("Loaded %d API key(s).", len(validAPIKeys))
+
+	// Initialize email queue and channels
+	emailQueue = make(chan QueuedEmail, 1000) // Buffer for 1000 emails
+	quitChan = make(chan bool, 1)
+
+	// Start the email worker
+	emailWorker.Add(1)
+	go emailWorkerProcess()
+}
+
+// emailWorkerProcess processes emails from the queue at a rate of 1 per second
+func emailWorkerProcess() {
+	defer emailWorker.Done()
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case email := <-emailQueue:
+			// Send the email
+			sendQueuedEmail(email)
+			// Wait for the ticker before processing the next email
+			<-ticker.C
+
+		case <-quitChan:
+			return
+		}
+	}
+}
+
+// sendQueuedEmail handles the actual sending of a queued email
+func sendQueuedEmail(email QueuedEmail) error {
+	// Prepare the email message
+	msg := []byte("To: " + email.To + "\r\n" +
+		"From: " + smtpConfig.Sender + "\r\n" +
+		"Subject: " + email.Subject + "\r\n" +
+		"MIME-version: 1.0;\nContent-Type: text/html; charset=\"UTF-8\";\r\n" +
+		"\r\n" +
+		email.Body + "\r\n")
+
+	// Authenticate with the SMTP server
+	auth := smtp.PlainAuth("", smtpConfig.Username, smtpConfig.Password, smtpConfig.Host)
+
+	// Send the email
+	addr := fmt.Sprintf("%s:%d", smtpConfig.Host, smtpConfig.Port)
+	return smtp.SendMail(addr, auth, smtpConfig.Sender, []string{email.To}, msg)
 }
 
 // authMiddleware checks for a valid API key in the Authorization header
@@ -110,7 +171,7 @@ func authMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// sendEmail handles the sending of an email
+// sendEmail handles the queuing of an email
 func sendEmail(w http.ResponseWriter, r *http.Request) {
 	var emailReq EmailRequest
 	if err := json.NewDecoder(r.Body).Decode(&emailReq); err != nil {
@@ -123,35 +184,32 @@ func sendEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Prepare the email message
-	msg := []byte("To: " + emailReq.To + "\r\n" +
-		"From: " + smtpConfig.Sender + "\r\n" +
-		"Subject: " + emailReq.Subject + "\r\n" +
-		"MIME-version: 1.0;\nContent-Type: text/html; charset=\"UTF-8\";\r\n" +
-		"\r\n" +
-		emailReq.Body + "\r\n")
+	// Generate unique ID for this email
 
-	// Authenticate with the SMTP server
-	auth := smtp.PlainAuth("", smtpConfig.Username, smtpConfig.Password, smtpConfig.Host)
-
-	// Send the email
-	addr := fmt.Sprintf("%s:%d", smtpConfig.Host, smtpConfig.Port)
-	err := smtp.SendMail(addr, auth, smtpConfig.Sender, []string{emailReq.To}, msg)
-	if err != nil {
-		log.Printf("Error sending email to %s: %v", emailReq.To, err)
-		http.Error(w, "Failed to send email", http.StatusInternalServerError)
-		return
+	queuedEmail := QueuedEmail{
+		To:      emailReq.To,
+		Subject: emailReq.Subject,
+		Body:    emailReq.Body,
 	}
 
-	log.Printf("Email sent successfully to %s", emailReq.To)
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"message": "Email sent successfully"})
+	// Try to queue the email (non-blocking)
+	select {
+	case emailQueue <- queuedEmail:
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{
+			"message": "Email queued successfully",
+			"status":  "queued",
+		})
+	default:
+		log.Printf("Email queue is full, rejecting email to %s", emailReq.To)
+		http.Error(w, "Email queue is full, please try again later", http.StatusServiceUnavailable)
+		return
+	}
 }
 
 func main() {
 	router := mux.NewRouter()
 
-	// Create a subrouter to apply middleware to
 	api := router.PathPrefix("/").Subrouter()
 	api.Use(authMiddleware)
 
@@ -164,5 +222,28 @@ func main() {
 	}
 
 	log.Printf("Server starting on :%s", port)
-	log.Fatal(http.ListenAndServe(":"+port, router))
+
+	// Create server with graceful shutdown
+	server := &http.Server{
+		Addr:    ":" + port,
+		Handler: router,
+	}
+
+	// Start server in a goroutine
+	go func() {
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Server failed to start: %v", err)
+		}
+	}()
+
+	// Wait for interrupt signal to gracefully shutdown the server
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	log.Println("Shutting down server...")
+	quitChan <- true
+	emailWorker.Wait()
+	_, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
 }
