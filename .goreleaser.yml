@@ -8,7 +8,6 @@ builds:
       - freebsd
       - netbsd
       - openbsd    
-      - wasm
     goarch:
       - amd64
       - arm64
