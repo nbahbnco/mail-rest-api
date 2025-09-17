@@ -1,4 +1,5 @@
 # .goreleaser.yml
+version: 2
 builds:
   - id: mailrestapi
     binary: mailrestapi
@@ -24,32 +25,11 @@ builds:
 
 # Only include the executable, no additional files
 archives:
-  # Linux archives with service file
-  - id: linux
-    format: tar.zst
-    builds:
-      - mailrestapi
-    goos:
-      - linux
+  - formats: tar.zst
+    format_overrides:
+      - goos: windows
+        formats: ['zip', 'tar.zst']
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
       - mailrestapi*
       - "linux/systemd/mailrestapi.service"
-  
-  # Other platforms - executable only
-  - id: others
-    format: tar.zst
-    format_overrides:
-      - goos: windows
-        format: zip
-    builds:
-      - mailrestapi
-    goos:
-      - windows
-      - darwin
-      - freebsd
-      - netbsd
-      - openbsd
-    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    files:
-      - mailrestapi*
