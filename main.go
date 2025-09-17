@@ -9,6 +9,7 @@ import (
 	"net/smtp"
 	"os"
 	"os/signal"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,9 +21,11 @@ import (
 )
 
 type EmailRequest struct {
-	To      string `json:"to"`
-	Subject string `json:"subject"`
-	Body    string `json:"body"`
+	To      string   `json:"to"`
+	Cc      []string `json:"cc,omitempty"`
+	Bcc     []string `json:"bcc,omitempty"`
+	Subject string   `json:"subject"`
+	Body    string   `json:"body"`
 }
 
 type SMTPConfig struct {
@@ -35,6 +38,8 @@ type SMTPConfig struct {
 
 type QueuedEmail struct {
 	To      string
+	Cc      []string
+	Bcc     []string
 	Subject string
 	Body    string
 	ID      string
@@ -132,20 +137,34 @@ func emailWorkerProcess() {
 
 // sendQueuedEmail handles the actual sending of a queued email
 func sendQueuedEmail(email QueuedEmail) error {
+	// Build recipient list (To + CC + BCC)
+	var recipients []string
+	recipients = append(recipients, email.To)
+	recipients = append(recipients, email.Cc...)
+	recipients = append(recipients, email.Bcc...)
+
+	// Build email headers
+	headers := "To: " + email.To + "\r\n"
+	headers += "From: " + smtpConfig.Sender + "\r\n"
+
+	// Add CC header if present
+	if len(email.Cc) > 0 {
+		headers += "Cc: " + strings.Join(email.Cc, ", ") + "\r\n"
+	}
+
+	headers += "Subject: " + email.Subject + "\r\n"
+	headers += "MIME-version: 1.0;\nContent-Type: text/html; charset=\"UTF-8\";\r\n"
+	headers += "\r\n"
+
 	// Prepare the email message
-	msg := []byte("To: " + email.To + "\r\n" +
-		"From: " + smtpConfig.Sender + "\r\n" +
-		"Subject: " + email.Subject + "\r\n" +
-		"MIME-version: 1.0;\nContent-Type: text/html; charset=\"UTF-8\";\r\n" +
-		"\r\n" +
-		email.Body + "\r\n")
+	msg := []byte(headers + email.Body + "\r\n")
 
 	// Authenticate with the SMTP server
 	auth := smtp.PlainAuth("", smtpConfig.Username, smtpConfig.Password, smtpConfig.Host)
 
 	// Send the email
 	addr := fmt.Sprintf("%s:%d", smtpConfig.Host, smtpConfig.Port)
-	return smtp.SendMail(addr, auth, smtpConfig.Sender, []string{email.To}, msg)
+	return smtp.SendMail(addr, auth, smtpConfig.Sender, recipients, msg)
 }
 
 // authMiddleware checks for a valid API key in the Authorization header
@@ -175,6 +194,13 @@ func authMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// isValidEmail validates email address format
+func isValidEmail(email string) bool {
+	// Basic email regex pattern
+	emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
+	return emailRegex.MatchString(email)
+}
+
 // sendEmail handles the queuing of an email
 func sendEmail(w http.ResponseWriter, r *http.Request) {
 	var emailReq EmailRequest
@@ -188,10 +214,32 @@ func sendEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate unique ID for this email
+	// Validate email addresses
+	if !isValidEmail(emailReq.To) {
+		http.Error(w, "Invalid 'to' email address", http.StatusBadRequest)
+		return
+	}
+
+	// Validate CC email addresses if present
+	for _, cc := range emailReq.Cc {
+		if !isValidEmail(cc) {
+			http.Error(w, "Invalid 'cc' email address: "+cc, http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Validate BCC email addresses if present
+	for _, bcc := range emailReq.Bcc {
+		if !isValidEmail(bcc) {
+			http.Error(w, "Invalid 'bcc' email address: "+bcc, http.StatusBadRequest)
+			return
+		}
+	}
 
 	queuedEmail := QueuedEmail{
 		To:      emailReq.To,
+		Cc:      emailReq.Cc,
+		Bcc:     emailReq.Bcc,
 		Subject: emailReq.Subject,
 		Body:    emailReq.Body,
 	}
