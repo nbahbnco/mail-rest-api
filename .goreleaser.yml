@@ -1,6 +1,7 @@
 # .goreleaser.yml
 builds:
   - id: mailrestapi
+    binary: mailrestapi
     goos:
       - linux
       - windows
@@ -18,7 +19,15 @@ builds:
       - mips64
       - mips
     main: .
-    files:
-    - mailrestapi
     ldflags:
       - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
+
+# Only include the executable, no additional files
+archives:
+  - format: tar.zst
+    format_overrides:
+      - goos: windows
+        format: zip
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - mailrestapi*
