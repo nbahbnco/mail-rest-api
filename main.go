@@ -51,6 +51,11 @@ var (
 	emailQueue   chan QueuedEmail
 	emailWorker  sync.WaitGroup
 	quitChan     chan bool
+	
+	// Version information set during build
+	version = "dev"
+	commit  = "unknown"
+	date    = "unknown"
 )
 
 func init() {
@@ -259,8 +264,22 @@ func sendEmail(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// versionHandler returns version information
+func versionHandler(w http.ResponseWriter, r *http.Request) {
+	versionInfo := map[string]string{
+		"version": version,
+		"commit":  commit,
+		"date":    date,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(versionInfo)
+}
+
 func main() {
 	router := mux.NewRouter()
+
+	// Version endpoint (no auth required)
+	router.HandleFunc("/version", versionHandler).Methods("GET")
 
 	api := router.PathPrefix("/").Subrouter()
 	api.Use(authMiddleware)

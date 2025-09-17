@@ -43,7 +43,16 @@ jobs:
             # Option A: For GitHub Container Registry (ghcr.io)
             # Option B: For Docker Hub
             # ${{ secrets.DOCKERHUB_USERNAME }}/go-email-api
-          tags: type=raw,value=latest,enable={{is_default_branch}}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable={{is_default_branch}}
+          labels: |
+            org.opencontainers.image.title=Mail REST API
+            org.opencontainers.image.description=Email sending REST API with queuing and rate limiting
+            org.opencontainers.image.vendor=${{ github.repository_owner }}
 
       # 5. Log in to the container registry.
 
@@ -67,6 +76,11 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # Pass version information as build arguments
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            COMMIT=${{ github.sha }}
+            DATE=${{ github.event.head_commit.timestamp }}
           # Enable build caching to speed up future builds
           cache-from: type=gha
           cache-to: type=gha,mode=max
