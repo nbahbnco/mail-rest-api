@@ -1,0 +1,23 @@
+# .goreleaser.yml
+builds:
+  - id: mailrestapi
+    goos:
+      - linux
+      - windows
+      - darwin
+      - freebsd
+      - netbsd
+      - openbsd    
+      - wasm
+    goarch:
+      - amd64
+      - arm64
+      - riscv64
+      - s390x
+      - ppc64le
+      - mips64le
+      - mips64
+      - mips
+    main: .
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
