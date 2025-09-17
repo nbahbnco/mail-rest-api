@@ -18,5 +18,7 @@ builds:
       - mips64
       - mips
     main: .
+    files:
+    - mailrestapi
     ldflags:
       - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
